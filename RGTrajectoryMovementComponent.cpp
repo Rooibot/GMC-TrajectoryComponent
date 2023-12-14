@@ -51,7 +51,7 @@ void URGTrajectoryMovementComponent::BindReplicationData_Implementation()
 	BI_InputVelocityOffset = BindSinglePrecisionFloat(
 		InputVelocityOffset,
 		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_CombineMode::Default,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::Linear
 	);
@@ -102,6 +102,13 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 			bDebugHadPreviousPivot = bTrajectoryIsPivoting;
 		}
 		
+		if (DoInputAndVelocityDiffer())
+		{
+			const FVector LinearVelocityDirection = GetLinearVelocity_GMC().GetSafeNormal();
+			const FVector AccelerationDirection = UKismetMathLibrary::RotateAngleAxis(LinearVelocityDirection, InputVelocityOffsetAngle(), FVector(0.f, 0.f, 1.f));
+			DrawDebugLine(GetWorld(), ActorLocation, ActorLocation + (AccelerationDirection * 120.f), FColor::Yellow, false, -1, 0, 2.f);
+		}
+				
 		if (bTrajectoryEnabled)
 		{
 			PredictedTrajectory.DrawDebug(GetWorld(), GetPawnOwner()->GetActorTransform());
