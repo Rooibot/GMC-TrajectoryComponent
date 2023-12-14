@@ -4,3 +4,4 @@ This is a subclass of the `UGMC_OrganicMovementCmp` from the (currently in beta)
 
 It will _not_ work without GMCv2, of course.
 
+This repo existed to toss some files at folks, but per advice, it's been turned into a proper plugin that others can contribute to; find the current version at https://github.com/Rooibot/GMCExtended -- this version is outdated and the repo should be considered dead.
