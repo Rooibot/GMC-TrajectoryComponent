@@ -11,7 +11,6 @@
  */
 
 #include "RGTrajectoryMovementComponent.h"
-
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -101,14 +100,14 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 			DrawDebugSphere(GetWorld(), DebugPreviousPivot, 24.f, 12, bTrajectoryIsPivoting ? FColor::Yellow : FColor::White, false, bTrajectoryIsPivoting ? -1 : 2.f, 0, bTrajectoryIsPivoting ? 1.f : 2.f);
 			bDebugHadPreviousPivot = bTrajectoryIsPivoting;
 		}
-		
+
 		if (DoInputAndVelocityDiffer())
 		{
 			const FVector LinearVelocityDirection = GetLinearVelocity_GMC().GetSafeNormal();
 			const FVector AccelerationDirection = UKismetMathLibrary::RotateAngleAxis(LinearVelocityDirection, InputVelocityOffsetAngle(), FVector(0.f, 0.f, 1.f));
 			DrawDebugLine(GetWorld(), ActorLocation, ActorLocation + (AccelerationDirection * 120.f), FColor::Yellow, false, -1, 0, 2.f);
 		}
-				
+		
 		if (bTrajectoryEnabled)
 		{
 			PredictedTrajectory.DrawDebug(GetWorld(), GetPawnOwner()->GetActorTransform());
@@ -125,7 +124,7 @@ void URGTrajectoryMovementComponent::MovementUpdate_Implementation(float DeltaSe
 	if (!IsSimulatedProxy() || IsNetMode(NM_Standalone))
 	{
 		bInputPresent = !GetProcessedInputVector().IsZero();
-		InputVelocityOffset = GetAngleDifferenceXY(GetProcessedInputVector(), GetLinearVelocity_GMC());
+		InputVelocityOffset = GetAngleDifferenceXY(GetLinearVelocity_GMC(), GetProcessedInputVector());
 		CalculatedEffectiveAcceleration = GetTransientAcceleration();
 	}
 
@@ -146,13 +145,26 @@ void URGTrajectoryMovementComponent::GenSimulationTick_Implementation(float Delt
 float URGTrajectoryMovementComponent::GetAngleDifferenceXY(const FVector& A, const FVector& B)
 {
 	const FVector XY=FVector(1.f, 1.f, 0.f);
-	return GetAngleDifference(A * XY, B * XY);
+	const FVector AXY = A * XY;
+	const FVector BXY = B * XY;
+	
+	float Angle = GetAngleDifference(AXY, BXY);
+	const FVector Cross = FVector::CrossProduct(AXY, BXY);
+	Angle *= Cross.Z > 0.f ? 1.f : -1.f;
+	return Angle;
 }
 
 float URGTrajectoryMovementComponent::GetAngleDifferenceZ(const FVector& A, const FVector& B)
 {
 	const FVector Z=FVector(0.f, 0.f, 1.f);
-	return GetAngleDifference(A * Z, B * Z);
+	const FVector AZ = A * Z;
+	const FVector BZ = B * Z;
+
+	float Angle = GetAngleDifference(AZ, BZ);
+	const FVector Cross = FVector::CrossProduct(AZ, BZ);
+	Angle *= Cross.Y > 0.f ? 1.f : -1.f;
+
+	return Angle;
 }
 
 float URGTrajectoryMovementComponent::GetAngleDifference(const FVector& A, const FVector& B)
@@ -160,8 +172,13 @@ float URGTrajectoryMovementComponent::GetAngleDifference(const FVector& A, const
 	const FVector ANorm = A.GetSafeNormal();
 	const FVector BNorm = B.GetSafeNormal();
 
-	return FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(ANorm, BNorm)));
+	// Why waste time on math if they're identical?
+	if (ANorm == BNorm) return 0.f;
+
+	const float DotProduct = FVector::DotProduct(ANorm, BNorm);
+	return (180.0)/UE_DOUBLE_PI * FMath::Acos(DotProduct);
 }
+
 
 void URGTrajectoryMovementComponent::EnableTrajectoryDebug(bool bEnabled)
 {
