@@ -11,6 +11,7 @@
  */
 
 #include "RGTrajectoryMovementComponent.h"
+
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -54,6 +55,14 @@ void URGTrajectoryMovementComponent::BindReplicationData_Implementation()
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::Linear
 	);
+
+	BI_WantsRagdoll = BindBool(
+		bWantsRagdoll,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::PeriodicAndOnChange_Output,
+		EGMC_InterpolationFunction::NearestNeighbour
+	);
 }
 
 // Called every frame
@@ -62,6 +71,13 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	if (bResetMesh)
+	{
+		SkeletalMesh->AttachToComponent(GetPawnOwner()->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+		SkeletalMesh->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -GetRootCollisionHalfHeight(true)), FRotator(0.f, -90.f, 0.f));
+		bResetMesh = false;
+	}
+	
 	if (bHadInput && !IsInputPresent())
 	{
 		InputStoppedAt = GetTime();
@@ -141,6 +157,34 @@ void URGTrajectoryMovementComponent::GenSimulationTick_Implementation(float Delt
 
 	UpdateCalculatedEffectiveAcceleration();
 }
+
+bool URGTrajectoryMovementComponent::UpdateMovementModeDynamic_Implementation(FGMC_FloorParams& Floor,
+	float DeltaSeconds)
+{
+	if (bWantsRagdoll != SkeletalMesh->IsSimulatingPhysics())
+	{
+		if (bWantsRagdoll)
+		{
+			HaltMovement();
+		}
+		SetMovementMode(bWantsRagdoll ? MovementMode_Ragdoll : EGMC_MovementMode::Grounded);
+		SkeletalMesh->SetAllBodiesBelowSimulatePhysics(FName(TEXT("pelvis")), bWantsRagdoll, true);
+		return true;
+	}
+	
+	return Super::UpdateMovementModeDynamic_Implementation(Floor, DeltaSeconds);
+}
+
+void URGTrajectoryMovementComponent::OnMovementModeChanged_Implementation(EGMC_MovementMode PreviousMovementMode)
+{
+	Super::OnMovementModeChanged_Implementation(PreviousMovementMode);
+
+	if (PreviousMovementMode == MovementMode_Ragdoll)
+	{
+		bResetMesh = true;
+	}
+}
+
 
 float URGTrajectoryMovementComponent::GetAngleDifferenceXY(const FVector& A, const FVector& B)
 {
@@ -547,6 +591,16 @@ void URGTrajectoryMovementComponent::UpdateMovementSamples_Implementation()
 	{
 		AddNewMovementSample(GetMovementSampleFromCurrentState());
 	}	
+}
+
+void URGTrajectoryMovementComponent::EnableRagdoll()
+{
+	bWantsRagdoll = true;
+}
+
+void URGTrajectoryMovementComponent::DisableRagdoll()
+{
+	bWantsRagdoll = false;
 }
 
 

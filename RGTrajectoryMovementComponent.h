@@ -17,6 +17,8 @@
 #include "Containers/RingBuffer.h"
 #include "RGTrajectoryMovementComponent.generated.h"
 
+static EGMC_MovementMode MovementMode_Ragdoll = EGMC_MovementMode::Custom1;
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class ROOICORE_API URGTrajectoryMovementComponent : public UGMC_OrganicMovementCmp
 {
@@ -39,7 +41,9 @@ public:
 	virtual void BindReplicationData_Implementation() override;
 	virtual void MovementUpdate_Implementation(float DeltaSeconds) override;
 	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
-
+	virtual bool UpdateMovementModeDynamic_Implementation(FGMC_FloorParams& Floor, float DeltaSeconds) override;
+	virtual void OnMovementModeChanged_Implementation(EGMC_MovementMode PreviousMovementMode) override;
+	
 	// Utilities
 
 	/// Returns the angle, in degrees, by which vector B differs from vector A on the XY plane.
@@ -243,6 +247,28 @@ private:
 	float LastTrajectoryGameSeconds { 0.f };
 
 	float EffectiveTrajectoryTimeDomain { 0.f };	
+	
+#pragma endregion
+
+	// Ragdoll experiment
+#pragma region Ragdoll
+public:
+	UFUNCTION(BlueprintCallable, Category="Ragdoll")
+	void EnableRagdoll();
+
+	UFUNCTION(BlueprintCallable, Category="Ragdoll")
+	void DisableRagdoll();
+
+	UFUNCTION(BlueprintPure, Category="Ragdoll")
+	bool RagdollActive() const { return bWantsRagdoll; }
+	
+private:
+	
+	bool bWantsRagdoll { false };
+	int32 BI_WantsRagdoll { -1 };
+
+	// If true, we need to put our skeletal mesh back where we found it on the next component tick.
+	bool bResetMesh { false };
 	
 #pragma endregion
 	
