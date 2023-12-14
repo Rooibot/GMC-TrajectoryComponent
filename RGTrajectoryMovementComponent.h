@@ -40,20 +40,44 @@ public:
 	virtual void MovementUpdate_Implementation(float DeltaSeconds) override;
 	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement Trajectory|Debug")
-	bool bDrawDebugPredictions { true };
+	// Utilities
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
+	static float GetAngleDifferenceXY(const FVector& A, const FVector& B);
+	
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
+	static float GetAngleDifferenceZ(const FVector& A, const FVector& B);
+
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
+	static float GetAngleDifference(const FVector& A, const FVector& B);
+	
+	// Debug
+	
+	/// If called in a context where the DrawDebug calls are disabled, this function will do nothing.
+	UFUNCTION(BlueprintCallable, Category="Movement Trajectory")
+	void EnableTrajectoryDebug(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Movement Trajectory")
+	bool IsTrajectoryDebugEnabled() const;
 	
 	// Trajectory state functionality (input presence, acceleration synthesis for simulated proxies, etc.)
 #pragma region Trajectory State
 public:
-	
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Movement Trajectory")
+
+	/// If true, this pawn is actively being provided with an input acceleration.
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
 	bool IsInputPresent(bool bAllowGrace = false) const;
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Movement Trajectory")
-	bool DoInputAndVelocityDiffer() const { return bInputAndVelocityDiffer; }
+	/// If true, velocity differs enough from input acceleration that we're likely to pivot.
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
+	bool DoInputAndVelocityDiffer() const { return FMath::Abs(InputVelocityOffset) > 90.f; }
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Movement Trajectory")
+	/// The angle, in degrees, that velocity differs from provided input (on the XY plane).
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
+	float InputVelocityOffsetAngle() const { return InputVelocityOffset; }
+
+	/// The current effective acceleration we're moving at. This differs from input acceleration, as it's
+	/// calculated from movement history.
+	UFUNCTION(BlueprintPure, Category="Movement Trajectory")
 	FVector GetCurrentEffectiveAcceleration() const { return CalculatedEffectiveAcceleration; }
 
 private:
@@ -64,9 +88,9 @@ private:
 	bool bInputPresent { false };
 	int32 BI_InputPresent { -1 };
 
-	// Input state, for pivot detection
-	bool bInputAndVelocityDiffer { false };
-	int32 BI_InputAndVelocityDiffer { -1 };
+	// The angle, in degrees, by which our input acceleration and current linear velocity differ on the XY plane.
+	float InputVelocityOffset { 0.f };
+	int32 BI_InputVelocityOffset { -1 };
 
 	// Current effective acceleration, for pivot calculation
 	FVector CalculatedEffectiveAcceleration { 0.f };
@@ -136,11 +160,19 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Movement Trajectory", meta=(AllowPrivateAccess=true))
 	FVector PredictedPivotPoint { 0.f };
 
+#if WITH_EDITORONLY_DATA
+	/// Should we start with trajectory debug enabled? Only valid in editor.
+	UPROPERTY(EditDefaultsOnly, Category="Movement Trajectory", meta=(AllowPrivateAccess=true))
+	bool bDrawDebugPredictions { false };
+#endif
+	
+#if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
 	/// For debug rendering
 	bool bDebugHadPreviousStop { false };
 	FVector DebugPreviousStop { 0.f };
 	bool bDebugHadPreviousPivot { false };
 	FVector DebugPreviousPivot { 0.f };
+#endif
 	
 #pragma endregion 
 

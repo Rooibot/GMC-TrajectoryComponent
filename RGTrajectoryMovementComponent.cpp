@@ -43,17 +43,17 @@ void URGTrajectoryMovementComponent::BindReplicationData_Implementation()
 	BI_InputPresent = BindBool(
 		bInputPresent,
 		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::NeverCombine,
+		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::NearestNeighbour
 	);
 
-	BI_InputAndVelocityDiffer = BindBool(
-		bInputAndVelocityDiffer,
+	BI_InputVelocityOffset = BindSinglePrecisionFloat(
+		InputVelocityOffset,
 		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::NeverCombine,
+		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
-		EGMC_InterpolationFunction::NearestNeighbour
+		EGMC_InterpolationFunction::Linear
 	);
 }
 
@@ -83,8 +83,9 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 			UpdateTrajectoryPrediction();
 		}
 	}
-	
-	if (bDrawDebugPredictions && !IsNetMode(NM_DedicatedServer))
+
+#if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
+	if (IsTrajectoryDebugEnabled() && !IsNetMode(NM_DedicatedServer))
 	{
 		const FVector ActorLocation = GetActorLocation_GMC();
 		if (bTrajectoryIsStopping || (bDebugHadPreviousStop && GetLinearVelocity_GMC().IsZero()))
@@ -105,7 +106,8 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 		{
 			PredictedTrajectory.DrawDebug(GetWorld(), GetPawnOwner()->GetActorTransform());
 		}
-	}	
+	}
+#endif
 	
 }
 
@@ -116,7 +118,7 @@ void URGTrajectoryMovementComponent::MovementUpdate_Implementation(float DeltaSe
 	if (!IsSimulatedProxy() || IsNetMode(NM_Standalone))
 	{
 		bInputPresent = !GetProcessedInputVector().IsZero();
-		bInputAndVelocityDiffer = bInputPresent && DirectionsDifferXY(GetProcessedInputVector(), GetLinearVelocity_GMC());
+		InputVelocityOffset = GetAngleDifferenceXY(GetProcessedInputVector(), GetLinearVelocity_GMC());
 		CalculatedEffectiveAcceleration = GetTransientAcceleration();
 	}
 
@@ -132,6 +134,42 @@ void URGTrajectoryMovementComponent::GenSimulationTick_Implementation(float Delt
 	Super::GenSimulationTick_Implementation(DeltaTime);
 
 	UpdateCalculatedEffectiveAcceleration();
+}
+
+float URGTrajectoryMovementComponent::GetAngleDifferenceXY(const FVector& A, const FVector& B)
+{
+	const FVector XY=FVector(1.f, 1.f, 0.f);
+	return GetAngleDifference(A * XY, B * XY);
+}
+
+float URGTrajectoryMovementComponent::GetAngleDifferenceZ(const FVector& A, const FVector& B)
+{
+	const FVector Z=FVector(0.f, 0.f, 1.f);
+	return GetAngleDifference(A * Z, B * Z);
+}
+
+float URGTrajectoryMovementComponent::GetAngleDifference(const FVector& A, const FVector& B)
+{
+	const FVector ANorm = A.GetSafeNormal();
+	const FVector BNorm = B.GetSafeNormal();
+
+	return FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(ANorm, BNorm)));
+}
+
+void URGTrajectoryMovementComponent::EnableTrajectoryDebug(bool bEnabled)
+{
+#if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
+	bDrawDebugPredictions = bEnabled;
+#endif
+}
+
+bool URGTrajectoryMovementComponent::IsTrajectoryDebugEnabled() const
+{
+#if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
+	return bDrawDebugPredictions;
+#else
+	return false;
+#endif
 }
 
 bool URGTrajectoryMovementComponent::IsInputPresent(bool bAllowGrace) const
@@ -159,7 +197,7 @@ void URGTrajectoryMovementComponent::UpdateCalculatedEffectiveAcceleration()
 	const FGMC_Move LastMove = AccessMoveHistory(Idx - 1);
 	if (!LastMove.HasValidTimestamp() || LastMove.MetaData.Timestamp == SyncedTime) return;
 
-	const FVector DeltaV = GetLinearVelocity_GMC() - GetLinearVelocityFromState(LastMove.InputState);
+	const FVector DeltaV = GetLinearVelocity_GMC() - GetLinearVelocityFromState(LastMove.OutputState);
 	CalculatedEffectiveAcceleration = -DeltaV / (SyncedTime - LastMove.MetaData.Timestamp);
 }
 
