@@ -41,8 +41,14 @@ public:
 	virtual void BindReplicationData_Implementation() override;
 	virtual void MovementUpdate_Implementation(float DeltaSeconds) override;
 	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
+
 	virtual bool UpdateMovementModeDynamic_Implementation(FGMC_FloorParams& Floor, float DeltaSeconds) override;
+	virtual bool UpdateMovementModeStatic_Implementation(FGMC_FloorParams& Floor, float DeltaSeconds) override;
+
 	virtual void OnMovementModeChanged_Implementation(EGMC_MovementMode PreviousMovementMode) override;
+	virtual void OnMovementModeChangedSimulated_Implementation(EGMC_MovementMode PreviousMovementMode) override;
+
+	virtual bool CanMove_Implementation() const override;
 	
 	// Utilities
 
@@ -261,6 +267,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Ragdoll")
 	bool RagdollActive() const { return bWantsRagdoll; }
+
+	void SetRagdollActive(bool bActive);
+
+	virtual EGMC_MovementMode GetRagdollMode() const { return EGMC_MovementMode::Custom1; }
 	
 private:
 	
@@ -269,7 +279,17 @@ private:
 
 	// If true, we need to put our skeletal mesh back where we found it on the next component tick.
 	bool bResetMesh { false };
+
+	bool bFirstRagdollTick { false };
+
+	FVector PreviousRelativeMeshLocation { 0.f };
+	FRotator PreviousRelativeMeshRotation { 0.f };
+	float PreviousCollisionHalfHeight { 0.f };
+	
+	FVector RagdollLinearVelocity { 0.f };
+	int32 BI_RagdollLinearVelocity { -1 };
 	
 #pragma endregion
 	
 };
+

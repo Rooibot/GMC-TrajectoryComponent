@@ -11,7 +11,7 @@
  */
 
 #include "RGTrajectoryMovementComponent.h"
-
+#include "GeometryCollection/GeometryCollectionSimulationTypes.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -63,6 +63,14 @@ void URGTrajectoryMovementComponent::BindReplicationData_Implementation()
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::NearestNeighbour
 	);
+	
+	BI_RagdollLinearVelocity = BindCompressedVector(
+		RagdollLinearVelocity,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::PeriodicAndOnChange_Output,
+		EGMC_InterpolationFunction::NearestNeighbour
+	);
 }
 
 // Called every frame
@@ -73,9 +81,42 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 
 	if (bResetMesh)
 	{
+		UPrimitiveComponent* CollisionComponent = Cast<UPrimitiveComponent>(UpdatedComponent);
+		if (IsValid(CollisionComponent))
+		{
+			CollisionComponent->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
+			SetRootCollisionHalfHeight(PreviousCollisionHalfHeight, true, false);
+		}
+
+		SkeletalMesh->SetAllBodiesSimulatePhysics(false);
+		SkeletalMesh->ResetAllBodiesSimulatePhysics();
 		SkeletalMesh->AttachToComponent(GetPawnOwner()->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-		SkeletalMesh->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -GetRootCollisionHalfHeight(true)), FRotator(0.f, -90.f, 0.f));
+		SkeletalMesh->SetRelativeLocationAndRotation(PreviousRelativeMeshLocation, PreviousRelativeMeshRotation, false, nullptr, ETeleportType::ResetPhysics);
 		bResetMesh = false;
+	}
+	else if (bFirstRagdollTick && GetMovementMode() == GetRagdollMode())
+	{
+		bFirstRagdollTick = false;
+
+		if (bDrawDebugPredictions)
+		{
+			const FVector InitialActor = GetLinearVelocity_GMC();
+			const FVector InitialPhysics = SkeletalMesh->GetBoneLinearVelocity(FName(TEXT("root")));
+			DrawDebugLine(GetWorld(), GetActorLocation_GMC(), GetActorLocation_GMC() + RagdollLinearVelocity, FColor::Red, false, 1.f, 0, 2.f);
+		}
+
+		UPrimitiveComponent* CollisionComponent = Cast<UPrimitiveComponent>(UpdatedComponent);
+		if (IsValid(CollisionComponent))
+		{
+			CollisionComponent->SetCollisionEnabled(ECollisionEnabled::Type::NoCollision);
+		}
+		
+		PreviousCollisionHalfHeight = GetRootCollisionHalfHeight(true);
+		SetRootCollisionHalfHeight(0.1f, false, false);
+
+		SkeletalMesh->SetAllBodiesBelowSimulatePhysics(FName(TEXT("pelvis")), true, true);
+		SkeletalMesh->SetAllBodiesBelowLinearVelocity(FName(TEXT("pelvis")), RagdollLinearVelocity, true);
+		
 	}
 	
 	if (bHadInput && !IsInputPresent())
@@ -83,24 +124,40 @@ void URGTrajectoryMovementComponent::TickComponent(float DeltaTime, ELevelTick T
 		InputStoppedAt = GetTime();
 	}
 	bHadInput = IsInputPresent();
-	
-	if (bPrecalculateDistanceMatches)
-	{
-		UpdateStopPrediction();
-		UpdatePivotPrediction();
-	}
 
-	if (bTrajectoryEnabled)
+	if (GetMovementMode() == EGMC_MovementMode::Grounded)
 	{
-		UpdateMovementSamples();
-		if (bPrecalculateFutureTrajectory)
+		if (bPrecalculateDistanceMatches)
 		{
-			UpdateTrajectoryPrediction();
+			UpdateStopPrediction();
+			UpdatePivotPrediction();
 		}
+
+		if (bTrajectoryEnabled)
+		{
+			UpdateMovementSamples();
+			if (bPrecalculateFutureTrajectory)
+			{
+				UpdateTrajectoryPrediction();
+			}
+		}
+	}
+	else
+	{
+		bTrajectoryIsPivoting = false;
+		bTrajectoryIsStopping = false;
+		PredictedPivotPoint = FVector::ZeroVector;
+		PredictedStopPoint = FVector::ZeroVector;
+
+#if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
+		bDebugHadPreviousPivot = false;
+		bDebugHadPreviousStop = false;
+#endif
+		
 	}
 
 #if ENABLE_DRAW_DEBUG || WITH_EDITORONLY_DATA
-	if (IsTrajectoryDebugEnabled() && !IsNetMode(NM_DedicatedServer))
+	if (IsTrajectoryDebugEnabled() && !IsNetworkedServer() && GetMovementMode() == EGMC_MovementMode::Grounded)
 	{
 		const FVector ActorLocation = GetActorLocation_GMC();
 		if (bTrajectoryIsStopping || (bDebugHadPreviousStop && GetLinearVelocity_GMC().IsZero()))
@@ -155,34 +212,69 @@ void URGTrajectoryMovementComponent::GenSimulationTick_Implementation(float Delt
 {
 	Super::GenSimulationTick_Implementation(DeltaTime);
 
-	UpdateCalculatedEffectiveAcceleration();
+	if (GetMovementMode() == EGMC_MovementMode::Grounded)
+		UpdateCalculatedEffectiveAcceleration();
 }
 
 bool URGTrajectoryMovementComponent::UpdateMovementModeDynamic_Implementation(FGMC_FloorParams& Floor,
 	float DeltaSeconds)
 {
-	if (bWantsRagdoll != SkeletalMesh->IsSimulatingPhysics())
+	if (bWantsRagdoll || (GetMovementMode() == GetRagdollMode()))
 	{
-		if (bWantsRagdoll)
+		// We may need to either enable or disable ragdoll mode.
+		if (bWantsRagdoll && GetMovementMode() == EGMC_MovementMode::Grounded)
 		{
+			RagdollLinearVelocity = GetLinearVelocity_GMC();
 			HaltMovement();
 		}
-		SetMovementMode(bWantsRagdoll ? MovementMode_Ragdoll : EGMC_MovementMode::Grounded);
-		SkeletalMesh->SetAllBodiesBelowSimulatePhysics(FName(TEXT("pelvis")), bWantsRagdoll, true);
+		SetMovementMode(bWantsRagdoll ? GetRagdollMode() : EGMC_MovementMode::Grounded);
 		return true;
 	}
 	
-	return Super::UpdateMovementModeDynamic_Implementation(Floor, DeltaSeconds);
+	return Super::UpdateMovementModeDynamic_Implementation(Floor, DeltaSeconds);	
+}
+
+bool URGTrajectoryMovementComponent::UpdateMovementModeStatic_Implementation(FGMC_FloorParams& Floor,
+	float DeltaSeconds)
+{
+	
+	return Super::UpdateMovementModeStatic_Implementation(Floor, DeltaSeconds);
 }
 
 void URGTrajectoryMovementComponent::OnMovementModeChanged_Implementation(EGMC_MovementMode PreviousMovementMode)
 {
-	Super::OnMovementModeChanged_Implementation(PreviousMovementMode);
-
-	if (PreviousMovementMode == MovementMode_Ragdoll)
+	if (GetMovementMode() == GetRagdollMode())
 	{
-		bResetMesh = true;
+		SetRagdollActive(true);
 	}
+	else if (PreviousMovementMode == GetRagdollMode())
+	{
+		SetRagdollActive(false);
+	}
+
+	Super::OnMovementModeChanged_Implementation(PreviousMovementMode);
+}
+
+void URGTrajectoryMovementComponent::OnMovementModeChangedSimulated_Implementation(
+	EGMC_MovementMode PreviousMovementMode)
+{
+	if (GetMovementMode() == GetRagdollMode())
+	{
+		SetRagdollActive(true);
+	}
+	else if (PreviousMovementMode == GetRagdollMode())
+	{
+		SetRagdollActive(false);
+	}
+	
+	Super::OnMovementModeChangedSimulated_Implementation(PreviousMovementMode);
+}
+
+bool URGTrajectoryMovementComponent::CanMove_Implementation() const
+{
+	if (GetMovementMode() == GetRagdollMode()) return true;
+	
+	return Super::CanMove_Implementation();
 }
 
 
@@ -601,6 +693,25 @@ void URGTrajectoryMovementComponent::EnableRagdoll()
 void URGTrajectoryMovementComponent::DisableRagdoll()
 {
 	bWantsRagdoll = false;
+}
+
+void URGTrajectoryMovementComponent::SetRagdollActive(bool bActive)
+{
+	if (IsNetworkedServer()) return;
+	
+	if (bActive)
+	{
+		if (PreviousRelativeMeshLocation.IsZero())
+		{
+			PreviousRelativeMeshLocation = SkeletalMesh->GetRelativeLocation();
+			PreviousRelativeMeshRotation = SkeletalMesh->GetRelativeRotation();
+		}
+		HaltMovement();
+	}
+
+	bEnablePhysicsInteraction = !bActive;
+	bFirstRagdollTick = bActive;
+	bResetMesh = !bActive;
 }
 
 
